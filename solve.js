@@ -154,6 +154,9 @@ export function run(input) {
   // Error codes carried over from discarded record(s): a line holding
   // only lone CRs makes no record, but its stray_cr errors are still
   // recorded, stamped with the next record that is actually read.
+  // Each carried error also keeps the line its own record started on,
+  // so it can still be reported if the input ends right there and no
+  // next record ever comes.
   let pending = null;
 
   for (;;) {
@@ -290,8 +293,9 @@ export function run(input) {
     // A line holding only lone CRs makes no record. Its field-level
     // errors are carried over to the next record that is read.
     if (fields.length === 1 && !touched) {
-      if (pending === null) pending = recErrs;
-      else pending.push(...recErrs);
+      const carried = recErrs.map((code) => ({ code, line: startLine }));
+      if (pending === null) pending = carried;
+      else pending.push(...carried);
       continue;
     }
 
@@ -301,7 +305,7 @@ export function run(input) {
     const rowIdx = header && !haveWidth ? null : rows.length;
     if (pending !== null) {
       for (let k = 0; k < pending.length; k++) {
-        errors.push({ code: pending[k], line: startLine, row: rowIdx });
+        errors.push({ code: pending[k].code, line: startLine, row: rowIdx });
       }
       pending = null;
     }
@@ -333,6 +337,19 @@ export function run(input) {
       errors.push({ code: "long_row", line: startLine, row: rowIdx, extra });
     }
     rows.push(fields);
+  }
+
+  // The input ended while errors from a discarded record were still
+  // being carried: no next record will ever stamp them, so report
+  // them now, each on the line its own record started on, with the
+  // row index the next record would have had (null while the header
+  // is still unread).
+  if (pending !== null) {
+    const rowIdx = header && !haveWidth ? null : rows.length;
+    for (let k = 0; k < pending.length; k++) {
+      errors.push({ code: pending[k].code, line: pending[k].line, row: rowIdx });
+    }
+    pending = null;
   }
 
   if (!haveWidth) columns = header ? [] : null;
